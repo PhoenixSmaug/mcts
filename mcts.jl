@@ -50,7 +50,12 @@ const global neighboursBitmask = [(1 << 1) + (1 << 5) + (1 << 6),
                             (1 << 17) + (1 << 18) + (1 << 19) + (1 << 22) + (1 << 24),
                             (1 << 18) + (1 << 19) + (1 << 23)]
 
-struct Board
+"""
+Bitwise representation of the game board
+* playerA is the position of the player making the next move, playerB is the other
+* tiles is a bitmap of eliminated tiles, with `if ((1 << j) & b.tiles != 0)` we can check if the j-th is already eliminated
+"""
+mutable struct Board
     tiles::Int32
     playerA::Int8
     playerB::Int8
@@ -85,9 +90,108 @@ Base.show(io::IO, x::Board) = begin
     (turns % 2 == 0) ? println("+--+--+") : println("+-----+")
 end
 
+
+"""
+Check if board is valid
+"""
+@inline function check(b::Board)
+    if (b.playerA == b.playerB)  # two players same field
+        return false
+    end
+    if ((1 << b.playerA) & b.tiles == 0)  # player A on dead field
+        return false
+    end
+    if ((1 << b.playerB) & b.tiles == 0)  # player B on dead field
+        return false
+    end
+
+    return true
+end
+
+
+"""
+Check if board is won for current player
+"""
+@inline function checkWin(b::Board)
+    return ((neighboursBitmask[b.playerB + 1] & (b.tiles & ~(1 << b.playerA))) == 0)  # all legal moves for player B are covered by playerA or eliminated tiles
+end
+
+
+"""
+Check if board is lost for current player
+"""
+@inline function checkLose(b::Board)
+    return (neighboursBitmask[b.playerA + 1] & (b.tiles & ~(1 << b.playerB)) == 0)
+end
+
+
+"""
+Play remaining game with uniform random moves and determine winner
+"""
+function rollOut!(b::Board)
+    state = 0
+
+    # make random move until game is finished
+    while (state == 0)
+        state = randomMove!(b)
+    end
+
+    turns = 25 - length(replace(bitstring(b.tiles), "0" => ""))
+    if turns % 2 == 1
+        state *= -1
+    end
+
+    if state > 0
+        return true  #  player 1 has won
+    else
+        return false # player 2 has won
+    end
+end
+
+
+"""
+Choose uniform random legal move and report if game is finished
+"""
+function randomMove!(b::Board)
+    # select uniform random legal move (any neighbour tile except if tile already dead or playerB on this tile)
+    tileToMoveTo = rand([i for i in neighbours[b.playerA + 1] if i != -1  && ((1 << i) & b.tiles != 0) && i != b.playerB])  # uniform random legal move
+
+    # select uniform random legal tile to remove (all tiles except already dead or has player standing on it)
+    tileToEliminate = rand([i for i in 0 : 24 if ((1 << i) & b.tiles != 0) && i != b.playerA && i != b.playerB])
+
+    b.tiles &= ~(1 << tileToEliminate)  # eliminate tile
+    b.playerA = b.playerB  # switch players
+    b.playerB = tileToMoveTo  # position of now waiting player
+
+
+    if checkWin(b)
+        return 1
+    elseif checkLose(b)
+        return -1
+    else
+        return 0
+    end
+end
+
+
 function test()
-    b = Board(33554431, 16, 8)
-    println(b)
+    count = 0
+    for i in 1 : 100000
+        b = Board(33554431, 16, 8)
+        if rollOut!(b)
+            count += 1
+        end
+    end
+
+    println(count)
 end
 
 test()
+
+
+# TODO
+"""
+- Add Dictionary for Q and N
+- Serialization of Dictionary
+- Update Values for parent chain
+"""
