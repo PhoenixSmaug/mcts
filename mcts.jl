@@ -224,9 +224,9 @@ function backProp!(node::Node, player1won::Bool)
         turn = 25 - length(replace(bitstring(node.board.tiles), "0" => ""))
 
         if turn % 2 == 0
-            node.q += player1won
-        else
             node.q += 1 - player1won
+        else
+            node.q += player1won
         end
 
         node.n += 1
@@ -246,10 +246,11 @@ function nextMove(root::Node)
     for (action, child) in root.children
         if root.children[action].n > maxN
             bestMove = action
+            maxN = root.children[action].n
         end
     end
 
-    return Board(root.board.tiles & ~(1 << bestMove[2]), root.board.playerB, bestMove[1])
+    return Board(root.board.tiles & ~(1 << bestMove[2]), root.board.playerB, bestMove[1]), root.children[bestMove]
 end
 
 
@@ -272,20 +273,65 @@ function MCTS!(root::Node, timeLimit::Float64)
     println(numRoll)
 end
 
+function randomPlay(board::Board)
+    # loop in random order over legal moves
+    for move in shuffle([i for i in neighbours[board.playerA + 1] if i != -1  && ((1 << i) & board.tiles != 0) && i != board.playerB])
+        elimCand = [i for i in 0 : 24 if ((1 << i) & board.tiles != 0) && i != move && i != board.playerB]
+
+        if !isempty(elimCand)
+            elim = rand(elimCand)  # random tile to eliminate
+            return Board(board.tiles & ~(1 << elim), board.playerB, move), Pair(move, elim)
+        end
+    end
+
+    return nothing, nothing
+end
 
 function test()
     b = Board(33554431, 16, 8)
+    b, _ = randomPlay(b)  # AI plays as second player
+    root = Node(b)
 
     while true
         println(b)
-        root = Node(b)
+        MCTS!(root, 0.2)
+
+        if isempty(root.children)  # game over
+            println("Lost")
+            break
+        end
+
+        b, root = nextMove(root)
+        expand!(root)  # ensure a children exist for each opponent move
+
+        println(b)
+
+        b, act = randomPlay(b)
+
+        if isnothing(b)
+            println("Won")
+            break
+        end
+
+        root = root.children[act]
+    end
+end
+
+
+function play()
+    b = Board(33554431, 16, 8)
+    root = Node(b)
+
+    while true
+        println(b)
+        println("$(b.tiles), $(b.playerA), $(b.playerB)")
         MCTS!(root, 1.5)
 
         if isempty(root.children)  # game over
             break
         end
 
-        b = nextMove(root)
+        b, root = nextMove(root)
     end
 end
 
