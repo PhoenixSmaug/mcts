@@ -182,12 +182,12 @@ function select(root::Node)
     node = root
 
     while !isempty(node.children)
-        bestActs = Vector{Pair(Int8, Int8)}()
+        bestActs = Vector{Pair{Int8, Int8}}()
         highestUCT = -1.0
 
         for move in filter(i -> i != -1 && ((1 << i) & node.board.tiles != 0) && i != node.board.playerB, neighbours[node.board.playerA + 1])
             for elim in filter(i -> ((1 << i) & node.board.tiles != 0) && i != move && i != node.board.playerB, 0 : 24)
-                uct = node.children[Pair(move, elim)].value
+                uct = value(node.children[Pair(move, elim)])
                 if uct > highestUCT
                     bestActs = [Pair(move, elim)]
                     highestUCT = uct
@@ -207,7 +207,7 @@ function select(root::Node)
     end
 
     # now we expand current leaf node
-    if expand!(node)
+    if !expand!(node)
         # choose random children for simulation if game is not finished
         _, node = rand(node.children)
     end
@@ -236,18 +236,57 @@ function backProp!(node::Node, player1won::Bool)
 end
 
 
-function test()
-    n = 10^5
+"""
+Choose next move based on highest N of a child (Q/N does not work, since some rarely explored actions have it)
+"""
+function nextMove(root::Node)
+    maxN = -1
+    bestMove = Pair(0, 0)
 
-    count = 0
-
-    for i in 1 : n
-        root = Node(Board(33554431, 16, 8))
-
-        if rollout!(root)
-            count += 1
+    for (action, child) in root.children
+        if root.children[action].n > maxN
+            bestMove = action
         end
     end
 
-    println(count / n)
+    return Board(root.board.tiles & ~(1 << bestMove[2]), root.board.playerB, bestMove[1])
 end
+
+
+"""
+MCTS search
+"""
+function MCTS!(root::Node, timeLimit::Float64)
+    root.parent = nothing  # delete parent link for new root
+
+    startTime = time()
+    numRoll = 0  # TODO: Temp
+
+    while (time() - startTime) < timeLimit
+        node = select(root)
+        result = rollout!(node)
+        backProp!(node, result)
+        numRoll += 1
+    end
+
+    println(numRoll)
+end
+
+
+function test()
+    b = Board(33554431, 16, 8)
+
+    while true
+        println(b)
+        root = Node(b)
+        MCTS!(root, 1.5)
+
+        if isempty(root.children)  # game over
+            break
+        end
+
+        b = nextMove(root)
+    end
+end
+
+test()
