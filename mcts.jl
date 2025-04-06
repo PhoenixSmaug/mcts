@@ -99,7 +99,7 @@ Stored information about node in game tree
 """
 mutable struct Node
     board::Board
-    q::Int32  # number of wins after a visit
+    q::Int32  # number of wins after a visit (for current player A)
     n::Int32  # number of visits
     
     children::Dict{Pair{Int8, Int8}, Node}  # maps action to child
@@ -116,7 +116,7 @@ Calculate Upper Confidence Bound (sqrt(2) is theoretical value, can be optimized
 """
 @inline function value(node::Node, factor::Float64 = sqrt(2))
     if node.n == 0
-        throw(DomainError(node.n, "Node was never visited"))  # TODO: Maybe instead return `Inf`?
+        return Inf
     elseif isnothing(node.parent)
         throw(DomainError(node.parent, "Root node has no UCT"))
     end
@@ -171,6 +171,67 @@ Rollout current node (choose uniformly random legal moves until game is finished
         return true  # player 1 has won
     else
         return false  # player 2 has won
+    end
+end
+
+
+"""
+Select next node to expand
+"""
+function select(root::Node)
+    node = root
+
+    while !isempty(node.children)
+        bestActs = Vector{Pair(Int8, Int8)}()
+        highestUCT = -1.0
+
+        for move in filter(i -> i != -1 && ((1 << i) & node.board.tiles != 0) && i != node.board.playerB, neighbours[node.board.playerA + 1])
+            for elim in filter(i -> ((1 << i) & node.board.tiles != 0) && i != move && i != node.board.playerB, 0 : 24)
+                uct = node.children[Pair(move, elim)].value
+                if uct > highestUCT
+                    bestActs = [Pair(move, elim)]
+                    highestUCT = uct
+                elseif uct == highestUCT
+                    push!(bestActs, Pair(move, elim))
+                end
+            end
+        end
+
+        (move, elim) = rand(bestActs)
+        node = node.children[Pair(move, elim)]
+
+        if node.n == 0
+            # unexplored node
+            return node
+        end
+    end
+
+    # now we expand current leaf node
+    if expand!(node)
+        # choose random children for simulation if game is not finished
+        _, node = rand(node.children)
+    end
+
+    return node
+end
+
+
+"""
+Backpropagate values
+"""
+function backProp!(node::Node, player1won::Bool)
+    while !isnothing(node)
+        turn = 25 - length(replace(bitstring(node.board.tiles), "0" => ""))
+
+        if turn % 2 == 0
+            node.q += player1won
+        else
+            node.q += 1 - player1won
+        end
+
+        node.n += 1
+
+        node = node.parent
     end
 end
 
