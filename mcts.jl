@@ -1,3 +1,16 @@
+using Random
+
+"""
+Bitwise representation of the game board
+* playerA is the position of the player making the next move, playerB is the other
+* tiles is a bitmap of eliminated tiles, with `if ((1 << j) & b.tiles != 0)` we can check if the j-th is already eliminated
+"""
+struct Board
+    tiles::Int32
+    playerA::Int8
+    playerB::Int8
+end
+
 const global neighbours = [[1, 5, 6, -1, -1, -1, -1, -1],
                             [0, 2, 5, 6, 7, -1, -1, -1],
                             [1, 3, 6, 7, 8, -1, -1, -1],
@@ -50,24 +63,14 @@ const global neighboursBitmask = [(1 << 1) + (1 << 5) + (1 << 6),
                             (1 << 17) + (1 << 18) + (1 << 19) + (1 << 22) + (1 << 24),
                             (1 << 18) + (1 << 19) + (1 << 23)]
 
-"""
-Bitwise representation of the game board
-* playerA is the position of the player making the next move, playerB is the other
-* tiles is a bitmap of eliminated tiles, with `if ((1 << j) & b.tiles != 0)` we can check if the j-th is already eliminated
-"""
-mutable struct Board
-    tiles::Int32
-    playerA::Int8
-    playerB::Int8
-end
 
 """
-Pretty print board
+Pretty print board and indicate which player makes the next turn
 """
 Base.show(io::IO, x::Board) = begin
     turns = 25 - length(replace(bitstring(x.tiles), "0" => ""))
 
-    (turns % 2 == 0) ? println("+--+--+") : println("+-----+")
+    (turns % 2 == 0) ? println("+-(1)-+") : println("+-(2)-+")
     for i in 0 : 24
         if (i % 5 == 0)
             print("|")
@@ -87,111 +90,103 @@ Base.show(io::IO, x::Board) = begin
             println("|")
         end
     end
-    (turns % 2 == 0) ? println("+--+--+") : println("+-----+")
+    (turns % 2 == 0) ? println("+-(1)-+") : println("+-(2)-+")
 end
 
 
 """
-Check if board is valid
+Stored information about node in game tree 
 """
-@inline function check(b::Board)
-    if (b.playerA == b.playerB)  # two players same field
-        return false
-    end
-    if ((1 << b.playerA) & b.tiles == 0)  # player A on dead field
-        return false
-    end
-    if ((1 << b.playerB) & b.tiles == 0)  # player B on dead field
-        return false
-    end
+mutable struct Node
+    board::Board
+    q::Int32  # number of wins after a visit
+    n::Int32  # number of visits
+    
+    children::Dict{Pair{Int8, Int8}, Node}  # maps action to child
+    parent::Union{Node, Nothing}
 
-    return true
+    function Node(board::Board, parent = nothing)
+        new(board, 0, 0, Dict{Pair{Int, Int}, Node}(), parent)
+    end
 end
 
 
 """
-Check if board is won for current player
+Calculate Upper Confidence Bound (sqrt(2) is theoretical value, can be optimized empirically)
 """
-@inline function checkWin(b::Board)
-    return ((neighboursBitmask[b.playerB + 1] & (b.tiles & ~(1 << b.playerA))) == 0)  # all legal moves for player B are covered by playerA or eliminated tiles
-end
-
-
-"""
-Check if board is lost for current player
-"""
-@inline function checkLose(b::Board)
-    return (neighboursBitmask[b.playerA + 1] & (b.tiles & ~(1 << b.playerB)) == 0)
-end
-
-
-"""
-Play remaining game with uniform random moves and determine winner
-"""
-function rollOut!(b::Board)
-    state = 0
-
-    # make random move until game is finished
-    while (state == 0)
-        state = randomMove!(b)
+@inline function value(node::Node, factor::Float64 = sqrt(2))
+    if node.n == 0
+        throw(DomainError(node.n, "Node was never visited"))  # TODO: Maybe instead return `Inf`?
+    elseif isnothing(node.parent)
+        throw(DomainError(node.parent, "Root node has no UCT"))
     end
 
-    turns = 25 - length(replace(bitstring(b.tiles), "0" => ""))
+    return node.q / node.n + factor * sqrt(log(node.parent.n) / node.n)
+end
+
+
+"""
+Expand leave node with all children
+"""
+@inline function expand!(node::Node)
+    gameFinished = true
+    for move in filter(i -> i != -1 && ((1 << i) & node.board.tiles != 0) && i != node.board.playerB, neighbours[node.board.playerA + 1])  # all legal moves (any neighbour tile except if tile already dead or playerB on this tile)
+        for elim in filter(i -> ((1 << i) & node.board.tiles != 0) && i != move && i != node.board.playerB, 0 : 24)  # all legal tile to remove (all tiles except already dead or has player standing on it)
+            gameFinished = false
+            newBoard = Board(node.board.tiles & ~(1 << elim), node.board.playerB, move)
+            node.children[Pair(move, elim)] = Node(newBoard, node)
+        end
+    end
+
+    return gameFinished
+end
+
+
+"""
+Rollout current node (choose uniformly random legal moves until game is finished)
+"""
+@inline function rollout!(node::Node)
+    board = node.board
+    gameFinished = false
+
+    while !gameFinished
+        gameFinished = true
+
+        # loop in random order over legal moves
+        for move in shuffle([i for i in neighbours[board.playerA + 1] if i != -1  && ((1 << i) & board.tiles != 0) && i != board.playerB])
+            elimCand = [i for i in 0 : 24 if ((1 << i) & board.tiles != 0) && i != move && i != board.playerB]
+
+            if !isempty(elimCand)
+                elim = rand(elimCand)  # random tile to eliminate
+                board = Board(board.tiles & ~(1 << elim), board.playerB, move)
+
+                gameFinished = false
+                break
+            end
+        end
+    end
+
+    turns = 25 - length(replace(bitstring(board.tiles), "0" => ""))
     if turns % 2 == 1
-        state *= -1
-    end
-
-    if state > 0
-        return true  #  player 1 has won
+        return true  # player 1 has won
     else
-        return false # player 2 has won
-    end
-end
-
-
-"""
-Choose uniform random legal move and report if game is finished
-"""
-function randomMove!(b::Board)
-    # select uniform random legal move (any neighbour tile except if tile already dead or playerB on this tile)
-    tileToMoveTo = rand([i for i in neighbours[b.playerA + 1] if i != -1  && ((1 << i) & b.tiles != 0) && i != b.playerB])  # uniform random legal move
-
-    # select uniform random legal tile to remove (all tiles except already dead or has player standing on it)
-    tileToEliminate = rand([i for i in 0 : 24 if ((1 << i) & b.tiles != 0) && i != b.playerA && i != b.playerB])
-
-    b.tiles &= ~(1 << tileToEliminate)  # eliminate tile
-    b.playerA = b.playerB  # switch players
-    b.playerB = tileToMoveTo  # position of now waiting player
-
-
-    if checkWin(b)
-        return 1
-    elseif checkLose(b)
-        return -1
-    else
-        return 0
+        return false  # player 2 has won
     end
 end
 
 
 function test()
+    n = 10^5
+
     count = 0
-    for i in 1 : 100000
-        b = Board(33554431, 16, 8)
-        if rollOut!(b)
+
+    for i in 1 : n
+        root = Node(Board(33554431, 16, 8))
+
+        if rollout!(root)
             count += 1
         end
     end
 
-    println(count)
+    println(count / n)
 end
-
-test()
-
-
-# TODO
-"""
-- Add Dictionary for Q and N
-- Serialization of Dictionary
-- Update Values for parent chain
-"""
