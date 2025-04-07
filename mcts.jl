@@ -261,78 +261,125 @@ function MCTS!(root::Node, timeLimit::Float64)
     root.parent = nothing  # delete parent link for new root
 
     startTime = time()
-    numRoll = 0  # TODO: Temp
 
     while (time() - startTime) < timeLimit
         node = select(root)
         result = rollout!(node)
         backProp!(node, result)
-        numRoll += 1
     end
-
-    println(numRoll)
 end
 
-function randomPlay(board::Board)
+
+"""
+MCTS competing against MCTS
+"""
+function MCTSvsMCTS(timeLimit::Float64 = 0.5, prettyPrint::Bool = true)
+    b = Board(33554431, 16, 8)  # start board
+    root = Node(b)
+
+    while true
+        if prettyPrint
+            println(b)
+        end
+        MCTS!(root, timeLimit)  # explore search tree
+
+        if isempty(root.children)  # game over
+            break
+        end
+
+        b, root = nextMove(root)  # make move
+    end
+
+    turns = 25 - length(replace(bitstring(b.tiles), "0" => ""))
+    (turns % 2 == 0) ? println("Player 2 has won") : println("Player 1 has won")
+end
+
+
+"""
+MCTS competing against Random player
+"""
+function MCTSvsRandom(MCTSFirst::Bool = true, timeLimit::Float64 = 0.5, prettyPrint::Bool = true)
+    b = Board(33554431, 16, 8)  # start board
+    root = Node(b)
+
+    if !MCTSFirst
+        if prettyPrint
+            println(b)
+        end
+        b = randomMove!(b, root)
+
+        if isnothing(b)
+            println("MCTS has won")
+            return true
+        end
+    end
+
+    while true
+        if prettyPrint
+            println(b)
+        end
+        MCTS!(root, timeLimit)  # explore search tree
+
+        if isempty(root.children)
+            println("Random has won")
+            return false
+        end
+        
+        b, root = nextMove(root)  # make MCTS move
+        if prettyPrint
+            println(b)
+        end
+
+        b = randomMove!(b, root)  # make random move
+
+        if isnothing(b)
+            println("MCTS has won")
+            return true
+        end
+    end
+end
+
+
+@inline function randomMove!(board::Board, root::Node)
+    expand!(root)  # ensure all children of root are part of tree
+
     # loop in random order over legal moves
     for move in shuffle([i for i in neighbours[board.playerA + 1] if i != -1  && ((1 << i) & board.tiles != 0) && i != board.playerB])
         elimCand = [i for i in 0 : 24 if ((1 << i) & board.tiles != 0) && i != move && i != board.playerB]
 
         if !isempty(elimCand)
             elim = rand(elimCand)  # random tile to eliminate
-            return Board(board.tiles & ~(1 << elim), board.playerB, move), Pair(move, elim)
+            root = root.children[Pair(move, elim)]  # update root
+
+            return Board(board.tiles & ~(1 << elim), board.playerB, move)
         end
-    end
-
-    return nothing, nothing
-end
-
-function test()
-    b = Board(33554431, 16, 8)
-    b, _ = randomPlay(b)  # AI plays as second player
-    root = Node(b)
-
-    while true
-        println(b)
-        MCTS!(root, 0.2)
-
-        if isempty(root.children)  # game over
-            println("Lost")
-            break
-        end
-
-        b, root = nextMove(root)
-        expand!(root)  # ensure a children exist for each opponent move
-
-        println(b)
-
-        b, act = randomPlay(b)
-
-        if isnothing(b)
-            println("Won")
-            break
-        end
-
-        root = root.children[act]
     end
 end
 
 
-function play()
-    b = Board(33554431, 16, 8)
-    root = Node(b)
+"""
+Evaluate MCTS against Random on 20 games per order, shows 100% win rate for MCTS
+"""
+function evaluateMCTSvsRandom()
+    n = 20
 
-    while true
-        println(b)
-        println("$(b.tiles), $(b.playerA), $(b.playerB)")
-        MCTS!(root, 1.5)
-
-        if isempty(root.children)  # game over
-            break
+    wins = 0
+    for i in 1 : n
+        if MCTSvsRandom(true, 0.1, false)
+            wins += 1
         end
-
-        b, root = nextMove(root)
     end
+
+    println("MCTS vs Random: $wins - $(n - wins)")
+
+    wins = 0
+    for i in 1 : n
+        if MCTSvsRandom(false, 0.1, false)
+            wins += 1
+        end
+    end
+
+    println("Random vs MCTS: $wins - $(n - wins)")
 end
 
-test()
+# (c) Mia Muessig
